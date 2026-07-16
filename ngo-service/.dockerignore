@@ -1,0 +1,23 @@
+# --- Comum ---
+.git
+.gitignore
+.env
+.env.*
+*.md
+README.md
+
+# --- Python (ngo-service / volunteer-service) ---
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# --- Go (donation-service) ---
+vendor/
+
+# --- Editores/OS ---
+.vscode/
+.idea/
+.DS_Store

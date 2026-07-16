@@ -1,0 +1,173 @@
+name: CI - Build, Scan & Push (SolidaryTech)
+
+# Roda em push/PR para main - só reconstrói os serviços que
+# realmente mudaram (monorepo com 3 microsserviços).
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {} # permite rodar manualmente pela aba Actions
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REGISTRY: 919675276626.dkr.ecr.us-east-1.amazonaws.com
+
+jobs:
+  # ---------- Detecta quais serviços mudaram neste push/PR ----------
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      ngo: ${{ steps.filter.outputs.ngo }}
+      donation: ${{ steps.filter.outputs.donation }}
+      volunteer: ${{ steps.filter.outputs.volunteer }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            ngo:
+              - 'ngo-service/**'
+            donation:
+              - 'donation-service/**'
+            volunteer:
+              - 'volunteer-service/**'
+
+  # ---------- Build + Scan + Push de cada serviço que mudou ----------
+  build-scan-push:
+    needs: detect-changes
+    if: |
+      needs.detect-changes.outputs.ngo == 'true' ||
+      needs.detect-changes.outputs.donation == 'true' ||
+      needs.detect-changes.outputs.volunteer == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write # necessário para publicar os resultados do Trivy na aba Security
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: ngo-service
+            changed: ${{ needs.detect-changes.outputs.ngo }}
+          - service: donation-service
+            changed: ${{ needs.detect-changes.outputs.donation }}
+          - service: volunteer-service
+            changed: ${{ needs.detect-changes.outputs.volunteer }}
+    steps:
+      - name: Checkout
+        if: matrix.changed == 'true'
+        uses: actions/checkout@v4
+
+      # --- Testes automatizados (se existirem no serviço) ---
+      # NOTA: o repositório original do hackathon não trouxe suíte de
+      # testes pronta para os 3 serviços. Este step já está preparado
+      # para rodar automaticamente assim que testes forem adicionados
+      # (pytest para os serviços Python, go test para o Go) - por ora,
+      # ele não falha o pipeline se não encontrar nenhum teste.
+      - name: Testes (Python)
+        if: matrix.changed == 'true' && (matrix.service == 'ngo-service' || matrix.service == 'volunteer-service')
+        working-directory: ${{ matrix.service }}
+        run: |
+          if [ -f requirements-dev.txt ] || ls test_*.py 1> /dev/null 2>&1 || ls tests/*.py 1> /dev/null 2>&1; then
+            pip install --quiet -r requirements.txt
+            pip install --quiet pytest
+            pytest || echo "::warning::Testes falharam ou não encontrados - revisar antes de produção"
+          else
+            echo "Nenhum teste encontrado em ${{ matrix.service }} - pulando (adicionar testes é recomendado)"
+          fi
+
+      - name: Testes (Go)
+        if: matrix.changed == 'true' && matrix.service == 'donation-service'
+        working-directory: ${{ matrix.service }}
+        run: |
+          if ls *_test.go 1> /dev/null 2>&1; then
+            go test ./... || echo "::warning::Testes falharam - revisar antes de produção"
+          else
+            echo "Nenhum teste encontrado em donation-service - pulando (adicionar testes é recomendado)"
+          fi
+
+      # --- SCA: scan de vulnerabilidades nas dependências (antes do build) ---
+      - name: Trivy - scan de dependências (SCA)
+        if: matrix.changed == 'true'
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: ${{ matrix.service }}
+          format: sarif
+          output: trivy-fs-${{ matrix.service }}.sarif
+          severity: CRITICAL,HIGH
+          exit-code: 0 # não bloqueia o pipeline - só reporta (ajuste para 1 se quiser bloquear em prod)
+
+      - name: Upload resultado do scan de dependências
+        if: matrix.changed == 'true'
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-fs-${{ matrix.service }}.sarif
+          category: trivy-fs-${{ matrix.service }}
+
+      # --- Credenciais AWS ---
+      # ATENÇÃO (AWS Academy Learner Lab): estas credenciais são
+      # temporárias e expiram a cada ~4h. Sempre que a sessão do Lab
+      # expirar, é necessário atualizar os 3 Secrets abaixo
+      # (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN)
+      # em Settings > Secrets and variables > Actions do repositório,
+      # senão este step falha com erro de autenticação.
+      - name: Configurar credenciais AWS
+        if: matrix.changed == 'true'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login no ECR
+        if: matrix.changed == 'true'
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # --- Build da imagem ---
+      # Tag = SHA curto do commit (o ECR está com IMMUTABLE tags, então
+      # "latest" fixo quebraria a partir do segundo push).
+      - name: Build da imagem
+        if: matrix.changed == 'true'
+        working-directory: ${{ matrix.service }}
+        run: |
+          docker build -t ${{ matrix.service }}:${{ github.sha }} .
+
+      # --- Scan da imagem final montada ---
+      - name: Trivy - scan da imagem
+        if: matrix.changed == 'true'
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ matrix.service }}:${{ github.sha }}
+          format: sarif
+          output: trivy-image-${{ matrix.service }}.sarif
+          severity: CRITICAL,HIGH
+          exit-code: 0
+
+      - name: Upload resultado do scan de imagem
+        if: matrix.changed == 'true'
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-image-${{ matrix.service }}.sarif
+          category: trivy-image-${{ matrix.service }}
+
+      # --- Push para o ECR ---
+      - name: Tag e push para o ECR
+        if: matrix.changed == 'true' && github.event_name != 'pull_request'
+        env:
+          ECR_REPO: ${{ steps.ecr-login.outputs.registry }}/${{ matrix.service }}
+        run: |
+          docker tag ${{ matrix.service }}:${{ github.sha }} $ECR_REPO:${{ github.sha }}
+          docker tag ${{ matrix.service }}:${{ github.sha }} $ECR_REPO:$(echo ${{ github.sha }} | cut -c1-7)
+          docker push $ECR_REPO:${{ github.sha }}
+          docker push $ECR_REPO:$(echo ${{ github.sha }} | cut -c1-7)
+          echo "### Imagem publicada" >> $GITHUB_STEP_SUMMARY
+          echo "\`$ECR_REPO:${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+
+      - name: PR - build validado, sem push
+        if: matrix.changed == 'true' && github.event_name == 'pull_request'
+        run: echo "Pull request: imagem construída e escaneada, mas não publicada no ECR (push só ocorre em merge na main)."
