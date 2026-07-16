@@ -170,4 +170,5 @@ jobs:
 
       - name: PR - build validado, sem push
         if: matrix.changed == 'true' && github.event_name == 'pull_request'
-        run: echo "Pull request: imagem construida e escaneada, mas nao publicada no ECR (push so ocorre em merge na main)."
+        run: |
+          echo "Pull request: imagem construida e escaneada, mas nao publicada no ECR (push so ocorre em merge na main)."
