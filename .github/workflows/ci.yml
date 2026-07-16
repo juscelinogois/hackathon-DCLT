@@ -1,7 +1,7 @@
 name: CI - Build, Scan & Push (SolidaryTech)
 
-# Roda em push/PR para main - só reconstrói os serviços que
-# realmente mudaram (monorepo com 3 microsserviços).
+# Roda em push/PR para main - so reconstroi os servicos que
+# realmente mudaram (monorepo com 3 microsservicos).
 on:
   push:
     branches: [main]
@@ -14,7 +14,7 @@ env:
   ECR_REGISTRY: 919675276626.dkr.ecr.us-east-1.amazonaws.com
 
 jobs:
-  # ---------- Detecta quais serviços mudaram neste push/PR ----------
+  # ---------- Detecta quais servicos mudaram neste push/PR ----------
   detect-changes:
     runs-on: ubuntu-latest
     outputs:
@@ -34,7 +34,7 @@ jobs:
             volunteer:
               - 'volunteer-service/**'
 
-  # ---------- Build + Scan + Push de cada serviço que mudou ----------
+  # ---------- Build + Scan + Push de cada servico que mudou ----------
   build-scan-push:
     needs: detect-changes
     if: |
@@ -44,7 +44,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      security-events: write # necessário para publicar os resultados do Trivy na aba Security
+      security-events: write # necessario para publicar os resultados do Trivy na aba Security
     strategy:
       fail-fast: false
       matrix:
@@ -60,12 +60,12 @@ jobs:
         if: matrix.changed == 'true'
         uses: actions/checkout@v4
 
-      # --- Testes automatizados (se existirem no serviço) ---
-      # NOTA: o repositório original do hackathon não trouxe suíte de
-      # testes pronta para os 3 serviços. Este step já está preparado
+      # --- Testes automatizados (se existirem no servico) ---
+      # NOTA: o repositorio original do hackathon nao trouxe suite de
+      # testes pronta para os 3 servicos. Este step ja esta preparado
       # para rodar automaticamente assim que testes forem adicionados
-      # (pytest para os serviços Python, go test para o Go) - por ora,
-      # ele não falha o pipeline se não encontrar nenhum teste.
+      # (pytest para os servicos Python, go test para o Go) - por ora,
+      # ele nao falha o pipeline se nao encontrar nenhum teste.
       - name: Testes (Python)
         if: matrix.changed == 'true' && (matrix.service == 'ngo-service' || matrix.service == 'volunteer-service')
         working-directory: ${{ matrix.service }}
@@ -73,9 +73,9 @@ jobs:
           if [ -f requirements-dev.txt ] || ls test_*.py 1> /dev/null 2>&1 || ls tests/*.py 1> /dev/null 2>&1; then
             pip install --quiet -r requirements.txt
             pip install --quiet pytest
-            pytest || echo "::warning::Testes falharam ou não encontrados - revisar antes de produção"
+            pytest || echo "::warning::Testes falharam ou nao encontrados - revisar antes de producao"
           else
-            echo "Nenhum teste encontrado em ${{ matrix.service }} - pulando (adicionar testes é recomendado)"
+            echo "Nenhum teste encontrado em ${{ matrix.service }} - pulando (adicionar testes e recomendado)"
           fi
 
       - name: Testes (Go)
@@ -83,13 +83,13 @@ jobs:
         working-directory: ${{ matrix.service }}
         run: |
           if ls *_test.go 1> /dev/null 2>&1; then
-            go test ./... || echo "::warning::Testes falharam - revisar antes de produção"
+            go test ./... || echo "::warning::Testes falharam - revisar antes de producao"
           else
-            echo "Nenhum teste encontrado em donation-service - pulando (adicionar testes é recomendado)"
+            echo "Nenhum teste encontrado em donation-service - pulando (adicionar testes e recomendado)"
           fi
 
-      # --- SCA: scan de vulnerabilidades nas dependências (antes do build) ---
-      - name: Trivy - scan de dependências (SCA)
+      # --- SCA: scan de vulnerabilidades nas dependencias (antes do build) ---
+      - name: Trivy - scan de dependencias (SCA)
         if: matrix.changed == 'true'
         uses: aquasecurity/trivy-action@master
         with:
@@ -98,9 +98,9 @@ jobs:
           format: sarif
           output: trivy-fs-${{ matrix.service }}.sarif
           severity: CRITICAL,HIGH
-          exit-code: 0 # não bloqueia o pipeline - só reporta (ajuste para 1 se quiser bloquear em prod)
+          exit-code: 0 # nao bloqueia o pipeline - so reporta (ajuste para 1 se quiser bloquear em prod)
 
-      - name: Upload resultado do scan de dependências
+      - name: Upload resultado do scan de dependencias
         if: matrix.changed == 'true'
         uses: github/codeql-action/upload-sarif@v3
         with:
@@ -108,12 +108,12 @@ jobs:
           category: trivy-fs-${{ matrix.service }}
 
       # --- Credenciais AWS ---
-      # ATENÇÃO (AWS Academy Learner Lab): estas credenciais são
-      # temporárias e expiram a cada ~4h. Sempre que a sessão do Lab
-      # expirar, é necessário atualizar os 3 Secrets abaixo
+      # ATENCAO (AWS Academy Learner Lab): estas credenciais sao
+      # temporarias e expiram a cada ~4h. Sempre que a sessao do Lab
+      # expirar, e necessario atualizar os 3 Secrets abaixo
       # (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN)
-      # em Settings > Secrets and variables > Actions do repositório,
-      # senão este step falha com erro de autenticação.
+      # em Settings > Secrets and variables > Actions do repositorio,
+      # senao este step falha com erro de autenticacao.
       - name: Configurar credenciais AWS
         if: matrix.changed == 'true'
         uses: aws-actions/configure-aws-credentials@v4
@@ -129,7 +129,7 @@ jobs:
         uses: aws-actions/amazon-ecr-login@v2
 
       # --- Build da imagem ---
-      # Tag = SHA curto do commit (o ECR está com IMMUTABLE tags, então
+      # Tag = SHA curto do commit (o ECR esta com IMMUTABLE tags, entao
       # "latest" fixo quebraria a partir do segundo push).
       - name: Build da imagem
         if: matrix.changed == 'true'
@@ -170,4 +170,4 @@ jobs:
 
       - name: PR - build validado, sem push
         if: matrix.changed == 'true' && github.event_name == 'pull_request'
-        run: echo "Pull request: imagem construída e escaneada, mas não publicada no ECR (push só ocorre em merge na main)."
+        run: echo "Pull request: imagem construida e escaneada, mas nao publicada no ECR (push so ocorre em merge na main)."
